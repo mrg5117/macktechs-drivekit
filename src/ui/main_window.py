@@ -7,8 +7,6 @@ import threading
 import wx
 
 from ..core import installer_manager, disk_manager, profile_manager, tools_manager, deploy_profile
-from ..core.flash_manager import FlashQueue
-from ..models.drive import PartitionSpec
 from ..models.profile import DriveProfile
 from ..utils.constants import APP_NAME, APP_VERSION, OS_NAMES
 
@@ -36,7 +34,7 @@ class MainWindow(wx.Frame):
     def __init__(self):
         super().__init__(
             None, title=f"{APP_NAME} v{APP_VERSION}",
-            size=(960, 780),
+            size=(960, 800),
             style=wx.DEFAULT_FRAME_STYLE
         )
 
@@ -47,7 +45,7 @@ class MainWindow(wx.Frame):
         self.selected_profile = None
         self.tool_catalog = tools_manager.get_tool_catalog()
         self.deploy_profiles = deploy_profile.get_builtin_profiles()
-        self.selected_deploy = self.deploy_profiles[0]
+        self.is_single_mode = False
 
         self._build_ui()
         self.Centre()
@@ -60,106 +58,186 @@ class MainWindow(wx.Frame):
     def _build_ui(self):
         sizer = wx.BoxSizer(wx.VERTICAL)
 
-        header = wx.StaticText(self, label=f"  {APP_NAME}")
-        font = header.GetFont()
-        font.SetPointSize(18)
+        # ── Header ──
+        header_panel = wx.Panel(self)
+        header_panel.SetBackgroundColour(wx.Colour(45, 45, 48))
+        hsizer = wx.BoxSizer(wx.VERTICAL)
+
+        title = wx.StaticText(header_panel, label=f"  {APP_NAME}")
+        title.SetForegroundColour(wx.WHITE)
+        font = title.GetFont()
+        font.SetPointSize(20)
         font.SetWeight(wx.FONTWEIGHT_BOLD)
-        header.SetFont(font)
-        sizer.Add(header, 0, wx.TOP | wx.LEFT, 10)
+        title.SetFont(font)
+        hsizer.Add(title, 0, wx.TOP | wx.LEFT, 12)
 
-        # Mode selector
-        mode_row = wx.BoxSizer(wx.HORIZONTAL)
-        mode_row.Add(wx.StaticText(self, label="  Mode: "), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.mode_choice = wx.Choice(self, choices=[
-            "Multi-Boot Service Drive",
-            "Single Installer USB",
-        ])
-        self.mode_choice.SetSelection(0)
-        self.mode_choice.Bind(wx.EVT_CHOICE, self._on_mode_changed)
-        mode_row.Add(self.mode_choice, 0, wx.LEFT, 4)
-        sizer.Add(mode_row, 0, wx.LEFT | wx.BOTTOM, 8)
+        subtitle = wx.StaticText(header_panel,
+            label="  Build multi-boot installer drives, single USB installers, and service tools")
+        subtitle.SetForegroundColour(wx.Colour(180, 180, 180))
+        hsizer.Add(subtitle, 0, wx.LEFT | wx.BOTTOM, 12)
 
-        # Notebook
+        header_panel.SetSizer(hsizer)
+        sizer.Add(header_panel, 0, wx.EXPAND)
+
+        # ── Mode buttons ──
+        mode_panel = wx.Panel(self)
+        mode_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        mode_sizer.AddSpacer(12)
+
+        self.multi_btn = wx.ToggleButton(mode_panel, label="  Multi-Boot Drive  ", size=(-1, 36))
+        self.multi_btn.SetValue(True)
+        self.multi_btn.Bind(wx.EVT_TOGGLEBUTTON, lambda e: self._set_mode(False))
+        mode_sizer.Add(self.multi_btn, 0, wx.ALL, 6)
+
+        self.single_btn = wx.ToggleButton(mode_panel, label="  Single Installer  ", size=(-1, 36))
+        self.single_btn.Bind(wx.EVT_TOGGLEBUTTON, lambda e: self._set_mode(True))
+        mode_sizer.Add(self.single_btn, 0, wx.ALL, 6)
+
+        mode_panel.SetSizer(mode_sizer)
+        sizer.Add(mode_panel, 0, wx.EXPAND)
+
+        # ── Notebook ──
         self.notebook = wx.Notebook(self)
 
-        self._build_drive_tab()
-        self._build_installer_tab()
-        self._build_profile_tab()
-        self._build_tools_tab()
-        self._build_deploy_tab()
-        self._build_build_tab()
+        self._build_step1_drive()
+        self._build_step2_installers()
+        self._build_step3_layout()
+        self._build_step4_tools()
+        self._build_step5_deploy()
+        self._build_step6_build()
 
-        sizer.Add(self.notebook, 1, wx.EXPAND | wx.ALL, 8)
+        sizer.Add(self.notebook, 1, wx.EXPAND | wx.ALL, 6)
 
         self.CreateStatusBar()
         self.SetStatusText("Ready")
         self.SetSizer(sizer)
         self.Layout()
 
-    # ── Tab 1: Drive ──
+    # ═══════════════════════════════════════════
+    # Step 1: Select Drive
+    # ═══════════════════════════════════════════
 
-    def _build_drive_tab(self):
+    def _build_step1_drive(self):
         panel = wx.Panel(self.notebook)
         sizer = wx.BoxSizer(wx.VERTICAL)
 
+        # Step description
+        desc = wx.StaticText(panel,
+            label="Step 1: Select the external drive to use.\n"
+                  "All data on this drive will be erased during the build process.")
+        desc.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        sizer.Add(desc, 0, wx.ALL, 14)
+
+        # Drive selector
         row = wx.BoxSizer(wx.HORIZONTAL)
-        row.Add(wx.StaticText(panel, label="External Drive:"), 0,
+        row.Add(wx.StaticText(panel, label="Drive:"), 0,
                 wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
-        self.drive_choice = wx.Choice(panel, size=(450, -1))
+        self.drive_choice = wx.Choice(panel, size=(500, -1))
         self.drive_choice.Bind(wx.EVT_CHOICE, self._on_drive_selected)
         row.Add(self.drive_choice, 1, wx.EXPAND | wx.RIGHT, 8)
         refresh_btn = wx.Button(panel, label="Refresh")
         refresh_btn.Bind(wx.EVT_BUTTON, lambda e: self._refresh_drives())
         row.Add(refresh_btn, 0)
-        sizer.Add(row, 0, wx.EXPAND | wx.ALL, 12)
+        sizer.Add(row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 14)
 
+        # Drive details
         self.drive_info = wx.TextCtrl(
-            panel, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 220)
+            panel, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 200)
         )
         self.drive_info.SetFont(wx.Font(12, wx.FONTFAMILY_TELETYPE,
                                          wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        sizer.Add(self.drive_info, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+        sizer.Add(self.drive_info, 1, wx.EXPAND | wx.ALL, 14)
 
-        self.rec_label = wx.StaticText(panel, label="Select a drive to see recommendations.")
+        # Recommendation
+        self.rec_label = wx.StaticText(panel, label="")
         self.rec_label.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT,
-                                        wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL))
-        sizer.Add(self.rec_label, 0, wx.ALL, 12)
+                                        wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        sizer.Add(self.rec_label, 0, wx.LEFT | wx.BOTTOM, 14)
+
+        # Next button
+        next_btn = wx.Button(panel, label="Next: Choose Installers  >>", size=(250, 36))
+        next_btn.Bind(wx.EVT_BUTTON, lambda e: self.notebook.SetSelection(1))
+        sizer.Add(next_btn, 0, wx.ALIGN_RIGHT | wx.RIGHT | wx.BOTTOM, 14)
 
         panel.SetSizer(sizer)
-        self.notebook.AddPage(panel, "  Drive  ")
+        self.notebook.AddPage(panel, "  1. Drive  ")
 
-    # ── Tab 2: Installers ──
+    # ═══════════════════════════════════════════
+    # Step 2: Installers
+    # ═══════════════════════════════════════════
 
-    def _build_installer_tab(self):
+    def _build_step2_installers(self):
         panel = wx.Panel(self.notebook)
         sizer = wx.BoxSizer(wx.VERTICAL)
 
+        # Description (changes with mode)
+        self.inst_desc = wx.StaticText(panel, label=(
+            "Step 2: Download the macOS installers you want on your service drive.\n"
+            "Click 'Fetch Latest from Apple' to see all available versions from Apple's servers.\n"
+            "Check the versions you need and click 'Download Selected'. Already downloaded\n"
+            "installers are marked — you only need to download what's missing."
+        ))
+        self.inst_desc.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT,
+                                        wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        sizer.Add(self.inst_desc, 0, wx.ALL, 14)
+
+        # Buttons
         row = wx.BoxSizer(wx.HORIZONTAL)
-        fetch_btn = wx.Button(panel, label="Fetch Available Versions")
+        fetch_btn = wx.Button(panel, label="Fetch Latest from Apple")
         fetch_btn.Bind(wx.EVT_BUTTON, self._on_fetch_installers)
         row.Add(fetch_btn, 0, wx.RIGHT, 8)
         self.dl_btn = wx.Button(panel, label="Download Selected")
         self.dl_btn.Bind(wx.EVT_BUTTON, self._on_download_selected)
         self.dl_btn.Disable()
         row.Add(self.dl_btn, 0)
-        sizer.Add(row, 0, wx.ALL, 12)
+        sizer.Add(row, 0, wx.LEFT | wx.RIGHT, 14)
 
-        self.inst_list = wx.CheckListBox(panel, size=(-1, 300))
-        sizer.Add(self.inst_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+        sizer.AddSpacer(8)
 
+        # Installer list
+        self.inst_list = wx.CheckListBox(panel, size=(-1, 250))
+        sizer.Add(self.inst_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 14)
+
+        # Already downloaded section
+        self.downloaded_label = wx.StaticText(panel, label="")
+        self.downloaded_label.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT,
+                                               wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL))
+        sizer.Add(self.downloaded_label, 0, wx.ALL, 14)
+
+        # Progress
         self.dl_gauge = wx.Gauge(panel, range=100, size=(-1, 18))
-        sizer.Add(self.dl_gauge, 0, wx.EXPAND | wx.ALL, 12)
+        sizer.Add(self.dl_gauge, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 14)
         self.dl_status = wx.StaticText(panel, label="")
-        sizer.Add(self.dl_status, 0, wx.LEFT | wx.BOTTOM, 12)
+        sizer.Add(self.dl_status, 0, wx.LEFT | wx.TOP, 14)
+
+        # Nav
+        nav = wx.BoxSizer(wx.HORIZONTAL)
+        back = wx.Button(panel, label="<<  Back")
+        back.Bind(wx.EVT_BUTTON, lambda e: self.notebook.SetSelection(0))
+        nav.Add(back, 0, wx.RIGHT, 8)
+        nav.AddStretchSpacer()
+        # Next label changes with mode
+        self.inst_next_btn = wx.Button(panel, label="Next  >>", size=(250, 36))
+        self.inst_next_btn.Bind(wx.EVT_BUTTON, self._on_inst_next)
+        nav.Add(self.inst_next_btn, 0)
+        sizer.Add(nav, 0, wx.EXPAND | wx.ALL, 14)
 
         panel.SetSizer(sizer)
-        self.notebook.AddPage(panel, "  Installers  ")
+        self.notebook.AddPage(panel, "  2. Installers  ")
 
-    # ── Tab 3: Layout ──
+    # ═══════════════════════════════════════════
+    # Step 3: Layout (Multi-Boot only)
+    # ═══════════════════════════════════════════
 
-    def _build_profile_tab(self):
+    def _build_step3_layout(self):
         panel = wx.Panel(self.notebook)
         sizer = wx.BoxSizer(wx.VERTICAL)
+
+        desc = wx.StaticText(panel,
+            label="Step 3: Choose a partition layout for your drive.\n"
+                  "Profiles pre-configure partition sizes based on your drive capacity.")
+        desc.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        sizer.Add(desc, 0, wx.ALL, 14)
 
         row = wx.BoxSizer(wx.HORIZONTAL)
         row.Add(wx.StaticText(panel, label="Profile:"), 0,
@@ -167,38 +245,54 @@ class MainWindow(wx.Frame):
         self.profile_choice = wx.Choice(panel, size=(400, -1))
         self.profile_choice.Bind(wx.EVT_CHOICE, self._on_profile_selected)
         row.Add(self.profile_choice, 1, wx.EXPAND)
-        sizer.Add(row, 0, wx.EXPAND | wx.ALL, 12)
+        sizer.Add(row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 14)
 
         self.profile_desc = wx.StaticText(panel, label="")
-        sizer.Add(self.profile_desc, 0, wx.LEFT | wx.BOTTOM, 12)
+        self.profile_desc.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT,
+                                           wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL))
+        sizer.Add(self.profile_desc, 0, wx.LEFT | wx.TOP | wx.BOTTOM, 14)
 
         self.layout_list = wx.ListCtrl(
-            panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 280)
+            panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 250)
         )
         self.layout_list.InsertColumn(0, "Partition Name", width=220)
         self.layout_list.InsertColumn(1, "Format", width=80)
         self.layout_list.InsertColumn(2, "Size", width=90)
         self.layout_list.InsertColumn(3, "Purpose", width=110)
         self.layout_list.InsertColumn(4, "macOS", width=100)
-        sizer.Add(self.layout_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+        sizer.Add(self.layout_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 14)
 
         self.total_label = wx.StaticText(panel, label="")
-        sizer.Add(self.total_label, 0, wx.ALL, 12)
+        sizer.Add(self.total_label, 0, wx.LEFT | wx.TOP, 14)
+
+        nav = wx.BoxSizer(wx.HORIZONTAL)
+        back = wx.Button(panel, label="<<  Back")
+        back.Bind(wx.EVT_BUTTON, lambda e: self.notebook.SetSelection(1))
+        nav.Add(back, 0)
+        nav.AddStretchSpacer()
+        nxt = wx.Button(panel, label="Next: Select Tools  >>", size=(250, 36))
+        nxt.Bind(wx.EVT_BUTTON, lambda e: self.notebook.SetSelection(3))
+        nav.Add(nxt, 0)
+        sizer.Add(nav, 0, wx.EXPAND | wx.ALL, 14)
 
         panel.SetSizer(sizer)
-        self.notebook.AddPage(panel, "  Layout  ")
+        self.notebook.AddPage(panel, "  3. Layout  ")
 
-    # ── Tab 4: Tools ──
+    # ═══════════════════════════════════════════
+    # Step 4: Tools
+    # ═══════════════════════════════════════════
 
-    def _build_tools_tab(self):
+    def _build_step4_tools(self):
         panel = wx.Panel(self.notebook)
         sizer = wx.BoxSizer(wx.VERTICAL)
 
-        lbl = wx.StaticText(panel, label="Select tools to include on the Tools partition:")
-        lbl.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        sizer.Add(lbl, 0, wx.ALL, 12)
+        desc = wx.StaticText(panel,
+            label="Step 4: Choose free tools and scripts to include on the Tools partition.\n"
+                  "These will be copied to the drive so they're available when booting client Macs.")
+        desc.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        sizer.Add(desc, 0, wx.ALL, 14)
 
-        # Group tools by category
+        # Scrollable tool list
         self.tools_checkboxes = []
         categories = {}
         for tool in self.tool_catalog:
@@ -210,60 +304,70 @@ class MainWindow(wx.Frame):
 
         for cat_name, tools in categories.items():
             box = wx.StaticBoxSizer(wx.VERTICAL, scroll, cat_name)
-
             for tool in tools:
                 cb = wx.CheckBox(scroll, label=tool.display)
                 cb.tool_ref = tool
-
-                # Auto-check apps that exist locally
                 if tool.install_method == "app_copy":
                     from pathlib import Path
                     if Path(tool.source).exists():
                         cb.SetValue(True)
                         tool.selected = True
                     else:
-                        cb.SetLabel(f"{tool.display}  [not installed]")
+                        cb.SetLabel(f"{tool.display}  [not installed locally]")
                         cb.Disable()
-
-                cb.Bind(wx.EVT_CHECKBOX, self._on_tool_toggled)
+                cb.Bind(wx.EVT_CHECKBOX, lambda e: setattr(e.GetEventObject().tool_ref, 'selected', e.IsChecked()))
                 box.Add(cb, 0, wx.ALL, 4)
                 self.tools_checkboxes.append(cb)
-
-            scroll_sizer.Add(box, 0, wx.EXPAND | wx.ALL, 6)
+            scroll_sizer.Add(box, 0, wx.EXPAND | wx.ALL, 4)
 
         scroll.SetSizer(scroll_sizer)
-        sizer.Add(scroll, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+        sizer.Add(scroll, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 14)
 
-        # Select all / none
-        btn_row = wx.BoxSizer(wx.HORIZONTAL)
+        # Quick buttons + scripts
+        row = wx.BoxSizer(wx.HORIZONTAL)
         sel_all = wx.Button(panel, label="Select All")
         sel_all.Bind(wx.EVT_BUTTON, lambda e: self._toggle_all_tools(True))
-        btn_row.Add(sel_all, 0, wx.RIGHT, 8)
+        row.Add(sel_all, 0, wx.RIGHT, 8)
         sel_none = wx.Button(panel, label="Select None")
         sel_none.Bind(wx.EVT_BUTTON, lambda e: self._toggle_all_tools(False))
-        btn_row.Add(sel_none, 0)
-        sizer.Add(btn_row, 0, wx.ALL, 12)
+        row.Add(sel_none, 0, wx.RIGHT, 20)
 
-        # Include repair scripts checkbox
         self.include_scripts = wx.CheckBox(panel,
-            label="Include repair scripts (system report, cache flush, malware check, etc.)")
+            label="Include repair scripts (system report, cache flush, malware check)")
         self.include_scripts.SetValue(True)
-        sizer.Add(self.include_scripts, 0, wx.LEFT | wx.BOTTOM, 12)
+        row.Add(self.include_scripts, 0, wx.ALIGN_CENTER_VERTICAL)
+        sizer.Add(row, 0, wx.ALL, 14)
+
+        # Nav
+        nav = wx.BoxSizer(wx.HORIZONTAL)
+        back = wx.Button(panel, label="<<  Back")
+        back.Bind(wx.EVT_BUTTON, lambda e: self.notebook.SetSelection(2 if not self.is_single_mode else 1))
+        nav.Add(back, 0)
+        nav.AddStretchSpacer()
+        nxt = wx.Button(panel, label="Next: Deploy Settings  >>", size=(250, 36))
+        nxt.Bind(wx.EVT_BUTTON, lambda e: self.notebook.SetSelection(4))
+        nav.Add(nxt, 0)
+        sizer.Add(nav, 0, wx.EXPAND | wx.ALL, 14)
 
         panel.SetSizer(sizer)
-        self.notebook.AddPage(panel, "  Tools  ")
+        self.notebook.AddPage(panel, "  4. Tools  ")
 
-    # ── Tab 5: Deploy Profile ──
+    # ═══════════════════════════════════════════
+    # Step 5: Deploy Profile
+    # ═══════════════════════════════════════════
 
-    def _build_deploy_tab(self):
+    def _build_step5_deploy(self):
         panel = wx.Panel(self.notebook)
         sizer = wx.BoxSizer(wx.VERTICAL)
 
-        lbl = wx.StaticText(panel, label="Pre-configure macOS install (username, password, settings):")
-        lbl.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        sizer.Add(lbl, 0, wx.ALL, 12)
+        desc = wx.StaticText(panel,
+            label="Step 5: Pre-configure a user account for macOS installs.\n"
+                  "A first-boot package will be created that sets up this account automatically.\n"
+                  "Leave blank to skip — the Mac will go through normal Setup Assistant.")
+        desc.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        sizer.Add(desc, 0, wx.ALL, 14)
 
-        # Profile preset selector
+        # Preset
         row = wx.BoxSizer(wx.HORIZONTAL)
         row.Add(wx.StaticText(panel, label="Preset:"), 0,
                 wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
@@ -273,102 +377,157 @@ class MainWindow(wx.Frame):
         self.deploy_choice.SetSelection(0)
         self.deploy_choice.Bind(wx.EVT_CHOICE, self._on_deploy_preset)
         row.Add(self.deploy_choice, 0)
-        sizer.Add(row, 0, wx.LEFT | wx.BOTTOM, 12)
+        sizer.Add(row, 0, wx.LEFT | wx.BOTTOM, 14)
 
         # Fields
-        grid = wx.FlexGridSizer(cols=2, vgap=8, hgap=12)
+        grid = wx.FlexGridSizer(cols=2, vgap=10, hgap=12)
         grid.AddGrowableCol(1, 1)
 
-        grid.Add(wx.StaticText(panel, label="Full Name:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.deploy_fullname = wx.TextCtrl(panel, size=(300, -1))
-        grid.Add(self.deploy_fullname, 1, wx.EXPAND)
+        fields = [
+            ("Full Name:", "deploy_fullname"),
+            ("Username:", "deploy_username"),
+            ("Password:", "deploy_password"),
+            ("Computer Name:", "deploy_compname"),
+            ("Timezone:", "deploy_tz"),
+        ]
+        for label, attr in fields:
+            grid.Add(wx.StaticText(panel, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
+            ctrl = wx.TextCtrl(panel, size=(350, -1))
+            setattr(self, attr, ctrl)
+            grid.Add(ctrl, 1, wx.EXPAND)
 
-        grid.Add(wx.StaticText(panel, label="Username:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.deploy_username = wx.TextCtrl(panel, size=(300, -1))
-        grid.Add(self.deploy_username, 1, wx.EXPAND)
+        sizer.Add(grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 14)
 
-        grid.Add(wx.StaticText(panel, label="Password:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.deploy_password = wx.TextCtrl(panel, size=(300, -1))
-        grid.Add(self.deploy_password, 1, wx.EXPAND)
-
-        grid.Add(wx.StaticText(panel, label="Computer Name:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.deploy_compname = wx.TextCtrl(panel, size=(300, -1))
-        grid.Add(self.deploy_compname, 1, wx.EXPAND)
-
-        grid.Add(wx.StaticText(panel, label="Timezone:"), 0, wx.ALIGN_CENTER_VERTICAL)
-        self.deploy_tz = wx.TextCtrl(panel, size=(300, -1))
-        grid.Add(self.deploy_tz, 1, wx.EXPAND)
-
-        sizer.Add(grid, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
-
-        # Options
         self.deploy_autologin = wx.CheckBox(panel, label="Enable auto-login")
-        sizer.Add(self.deploy_autologin, 0, wx.ALL, 12)
+        sizer.Add(self.deploy_autologin, 0, wx.LEFT | wx.TOP, 14)
 
         self.deploy_skipsetup = wx.CheckBox(panel, label="Skip Setup Assistant")
         self.deploy_skipsetup.SetValue(True)
-        sizer.Add(self.deploy_skipsetup, 0, wx.LEFT | wx.BOTTOM, 12)
+        sizer.Add(self.deploy_skipsetup, 0, wx.LEFT | wx.TOP, 14)
 
-        # Save button
-        save_row = wx.BoxSizer(wx.HORIZONTAL)
+        # Save
         save_btn = wx.Button(panel, label="Save as Custom Preset")
         save_btn.Bind(wx.EVT_BUTTON, self._on_save_deploy_profile)
-        save_row.Add(save_btn, 0)
-        sizer.Add(save_row, 0, wx.LEFT | wx.BOTTOM, 12)
+        sizer.Add(save_btn, 0, wx.LEFT | wx.TOP, 14)
 
-        # Info text
-        info = wx.StaticText(panel,
-            label="This generates a first-boot package (.pkg) that creates the user account\n"
-                  "and applies settings when macOS is installed from this drive.\n"
-                  "The package is placed on the Tools partition for use with MDS or manual install.")
-        info.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_ITALIC, wx.FONTWEIGHT_NORMAL))
-        sizer.Add(info, 0, wx.ALL, 12)
+        sizer.AddStretchSpacer()
+
+        # Nav
+        nav = wx.BoxSizer(wx.HORIZONTAL)
+        back = wx.Button(panel, label="<<  Back")
+        back.Bind(wx.EVT_BUTTON, lambda e: self.notebook.SetSelection(3))
+        nav.Add(back, 0)
+        nav.AddStretchSpacer()
+        nxt = wx.Button(panel, label="Next: Review & Build  >>", size=(250, 36))
+        nxt.Bind(wx.EVT_BUTTON, lambda e: (self._update_summary(), self.notebook.SetSelection(5)))
+        nav.Add(nxt, 0)
+        sizer.Add(nav, 0, wx.EXPAND | wx.ALL, 14)
 
         # Load first preset
         self._load_deploy_fields(self.deploy_profiles[0])
 
         panel.SetSizer(sizer)
-        self.notebook.AddPage(panel, "  Deploy  ")
+        self.notebook.AddPage(panel, "  5. Deploy  ")
 
-    # ── Tab 6: Build ──
+    # ═══════════════════════════════════════════
+    # Step 6: Build
+    # ═══════════════════════════════════════════
 
-    def _build_build_tab(self):
+    def _build_step6_build(self):
         panel = wx.Panel(self.notebook)
         sizer = wx.BoxSizer(wx.VERTICAL)
 
-        lbl = wx.StaticText(panel, label="Build Summary")
-        lbl.SetFont(wx.Font(13, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        sizer.Add(lbl, 0, wx.ALL, 12)
+        desc = wx.StaticText(panel,
+            label="Step 6: Review your settings and build the drive.\n"
+                  "This will erase the selected drive and set everything up.")
+        desc.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
+        sizer.Add(desc, 0, wx.ALL, 14)
 
         self.summary_text = wx.TextCtrl(
-            panel, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 140)
+            panel, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 150)
         )
         self.summary_text.SetFont(wx.Font(11, wx.FONTFAMILY_TELETYPE,
                                            wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        sizer.Add(self.summary_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+        sizer.Add(self.summary_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 14)
 
         self.build_gauge = wx.Gauge(panel, range=100, size=(-1, 22))
-        sizer.Add(self.build_gauge, 0, wx.EXPAND | wx.ALL, 12)
+        sizer.Add(self.build_gauge, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 14)
         self.build_status = wx.StaticText(panel, label="Ready to build")
-        sizer.Add(self.build_status, 0, wx.LEFT, 12)
+        sizer.Add(self.build_status, 0, wx.LEFT | wx.TOP, 14)
 
         self.build_log = wx.TextCtrl(
             panel, style=wx.TE_MULTILINE | wx.TE_READONLY, size=(-1, 180)
         )
         self.build_log.SetFont(wx.Font(11, wx.FONTFAMILY_TELETYPE,
                                         wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL))
-        sizer.Add(self.build_log, 1, wx.EXPAND | wx.ALL, 12)
+        sizer.Add(self.build_log, 1, wx.EXPAND | wx.ALL, 14)
 
+        # Nav + Build
+        nav = wx.BoxSizer(wx.HORIZONTAL)
+        back = wx.Button(panel, label="<<  Back")
+        back.Bind(wx.EVT_BUTTON, lambda e: self.notebook.SetSelection(4))
+        nav.Add(back, 0)
+        nav.AddStretchSpacer()
         self.build_btn = wx.Button(panel, label="Build Drive", size=(220, 44))
         self.build_btn.SetFont(wx.Font(14, wx.FONTFAMILY_DEFAULT,
                                         wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
         self.build_btn.Bind(wx.EVT_BUTTON, self._on_build)
-        sizer.Add(self.build_btn, 0, wx.ALIGN_CENTER | wx.BOTTOM, 12)
+        nav.Add(self.build_btn, 0)
+        sizer.Add(nav, 0, wx.EXPAND | wx.ALL, 14)
 
         panel.SetSizer(sizer)
-        self.notebook.AddPage(panel, "  Build  ")
+        self.notebook.AddPage(panel, "  6. Build  ")
 
-    # ── Data Loading ──
+    # ═══════════════════════════════════════════
+    # Mode Switching
+    # ═══════════════════════════════════════════
+
+    def _set_mode(self, single: bool):
+        self.is_single_mode = single
+        self.multi_btn.SetValue(not single)
+        self.single_btn.SetValue(single)
+        self._update_installer_desc()
+
+        if single:
+            self.notebook.SetPageText(0, "  1. Drive  ")
+            self.notebook.SetPageText(1, "  2. Installer  ")
+            self.notebook.SetPageText(2, "  3. (skip)  ")
+            self.notebook.SetPageText(5, "  4. Build  ")
+            self.SetStatusText("Single Installer: select a drive, pick one macOS version, and build.")
+        else:
+            self.notebook.SetPageText(0, "  1. Drive  ")
+            self.notebook.SetPageText(1, "  2. Installers  ")
+            self.notebook.SetPageText(2, "  3. Layout  ")
+            self.notebook.SetPageText(5, "  6. Build  ")
+            self.SetStatusText("Multi-Boot: build a full service drive with multiple macOS versions.")
+
+    def _update_installer_desc(self):
+        if self.is_single_mode:
+            self.inst_desc.SetLabel(
+                "Step 2: Pick the macOS version for this USB installer.\n"
+                "Click 'Fetch Latest from Apple' to see available versions, then download the one you need.\n"
+                "Select one installer to flash to the drive."
+            )
+            self.inst_next_btn.SetLabel("Next: Review & Build  >>")
+        else:
+            self.inst_desc.SetLabel(
+                "Step 2: Download the macOS installers you want on your service drive.\n"
+                "Click 'Fetch Latest from Apple' to see all available versions from Apple's servers.\n"
+                "Check the versions you need and click 'Download Selected'. Already downloaded\n"
+                "installers are marked — you only need to download what's missing."
+            )
+            self.inst_next_btn.SetLabel("Next: Partition Layout  >>")
+
+    def _on_inst_next(self, event):
+        if self.is_single_mode:
+            self._update_summary()
+            self.notebook.SetSelection(5)  # Skip to build
+        else:
+            self.notebook.SetSelection(2)  # Go to layout
+
+    # ═══════════════════════════════════════════
+    # Data Loading
+    # ═══════════════════════════════════════════
 
     def _refresh_all(self):
         self._load_profiles()
@@ -394,18 +553,19 @@ class MainWindow(wx.Frame):
 
     def _load_downloaded_installers(self):
         self.downloaded_installers = installer_manager.list_downloaded_installers()
-
-    # ── Mode ──
-
-    def _on_mode_changed(self, event):
-        mode = self.mode_choice.GetSelection()
-        if mode == 1:  # Single installer
-            # Hide layout tab content, simplify
-            self.SetStatusText("Single Installer mode: select one installer and a drive, then build.")
+        if self.downloaded_installers:
+            names = [f"{d.display_name} ({d.build})" for d in self.downloaded_installers]
+            self.downloaded_label.SetLabel(
+                f"Already downloaded: {', '.join(names)}"
+            )
         else:
-            self.SetStatusText("Multi-Boot mode: configure a full service drive.")
+            self.downloaded_label.SetLabel(
+                "No installers downloaded yet. Click 'Fetch Latest from Apple' above."
+            )
 
-    # ── Drive Tab ──
+    # ═══════════════════════════════════════════
+    # Drive Tab
+    # ═══════════════════════════════════════════
 
     def _on_drive_selected(self, event):
         idx = self.drive_choice.GetSelection()
@@ -428,7 +588,7 @@ class MainWindow(wx.Frame):
 
         suggested = profile_manager.suggest_profile(drive.size_gb)
         self.rec_label.SetLabel(
-            f"Recommended: {suggested.name}  --  "
+            f"Recommended profile: {suggested.name}  |  "
             f"Uses {suggested.total_size_gb():.0f} GB of {drive.display_size}"
         )
         for i, p in enumerate(self.profiles):
@@ -437,7 +597,9 @@ class MainWindow(wx.Frame):
                 self._show_layout(p)
                 break
 
-    # ── Installers Tab ──
+    # ═══════════════════════════════════════════
+    # Installers Tab
+    # ═══════════════════════════════════════════
 
     def _on_fetch_installers(self, event):
         self.SetStatusText("Fetching available installers from Apple...")
@@ -453,17 +615,18 @@ class MainWindow(wx.Frame):
     def _on_download_selected(self, event):
         checked = self.inst_list.GetCheckedItems()
         if not checked:
-            wx.MessageBox("No installers selected.", "Info", wx.OK | wx.ICON_INFORMATION)
+            wx.MessageBox("Select at least one installer to download.",
+                          "Nothing Selected", wx.OK | wx.ICON_INFORMATION)
             return
 
         idx = checked[0]
         inst = self.available_installers[idx]
         if inst.downloaded:
-            wx.MessageBox(f"{inst.display_name} is already downloaded.", "Info",
-                          wx.OK | wx.ICON_INFORMATION)
+            wx.MessageBox(f"{inst.display_name} is already downloaded.",
+                          "Already Downloaded", wx.OK | wx.ICON_INFORMATION)
             return
 
-        self.dl_status.SetLabel(f"Downloading {inst.display_name}...")
+        self.dl_status.SetLabel(f"Downloading {inst.display_name}... this may take a while.")
         self.dl_gauge.Pulse()
 
         def download():
@@ -476,7 +639,9 @@ class MainWindow(wx.Frame):
 
         threading.Thread(target=download, daemon=True).start()
 
-    # ── Layout Tab ──
+    # ═══════════════════════════════════════════
+    # Layout Tab
+    # ═══════════════════════════════════════════
 
     def _on_profile_selected(self, event):
         idx = self.profile_choice.GetSelection()
@@ -495,15 +660,12 @@ class MainWindow(wx.Frame):
             self.layout_list.SetItem(row, 3, spec.purpose)
             self.layout_list.SetItem(row, 4, spec.installer_version or "")
         self.total_label.SetLabel(
-            f"Total allocated: {profile.total_size_gb():.0f} GB  (+  remainder as free space)"
+            f"Total allocated: {profile.total_size_gb():.0f} GB  +  remainder as free space"
         )
-        self._update_summary()
 
-    # ── Tools Tab ──
-
-    def _on_tool_toggled(self, event):
-        cb = event.GetEventObject()
-        cb.tool_ref.selected = cb.GetValue()
+    # ═══════════════════════════════════════════
+    # Tools Tab
+    # ═══════════════════════════════════════════
 
     def _toggle_all_tools(self, state):
         for cb in self.tools_checkboxes:
@@ -511,11 +673,13 @@ class MainWindow(wx.Frame):
                 cb.SetValue(state)
                 cb.tool_ref.selected = state
 
-    # ── Deploy Tab ──
+    # ═══════════════════════════════════════════
+    # Deploy Tab
+    # ═══════════════════════════════════════════
 
     def _on_deploy_preset(self, event):
         idx = self.deploy_choice.GetSelection()
-        if idx >= 0:
+        if idx >= 0 and idx < len(self.deploy_profiles):
             self._load_deploy_fields(self.deploy_profiles[idx])
 
     def _load_deploy_fields(self, dp):
@@ -527,7 +691,7 @@ class MainWindow(wx.Frame):
         self.deploy_autologin.SetValue(dp.auto_login)
         self.deploy_skipsetup.SetValue(dp.skip_setup_assistant)
 
-    def _get_deploy_from_fields(self) -> deploy_profile.DeployProfile:
+    def _get_deploy_from_fields(self):
         return deploy_profile.DeployProfile(
             name=self.deploy_choice.GetStringSelection() or "Custom",
             full_name=self.deploy_fullname.GetValue(),
@@ -545,81 +709,111 @@ class MainWindow(wx.Frame):
         if dlg.ShowModal() == wx.ID_OK:
             dp.name = dlg.GetValue()
             deploy_profile.save_custom_profile(dp)
-            # Add to list if new
             names = [p.name for p in self.deploy_profiles]
             if dp.name not in names:
                 self.deploy_profiles.append(dp)
                 self.deploy_choice.Append(dp.name)
-            wx.MessageBox(f"Profile '{dp.name}' saved.", "Saved", wx.OK | wx.ICON_INFORMATION)
+            wx.MessageBox(f"Saved profile '{dp.name}'.", "Saved", wx.OK | wx.ICON_INFORMATION)
 
-    # ── Build Tab ──
+    # ═══════════════════════════════════════════
+    # Build Tab
+    # ═══════════════════════════════════════════
 
     def _update_summary(self):
-        if not self.selected_profile:
-            return
         drive_idx = self.drive_choice.GetSelection()
         drive_str = (self.external_drives[drive_idx].display_name
                      if drive_idx >= 0 else "No drive selected")
-        mode = "Single Installer" if self.mode_choice.GetSelection() == 1 else "Multi-Boot"
+        mode = "Single Installer" if self.is_single_mode else "Multi-Boot Service Drive"
 
-        lines = [
-            f"Mode:    {mode}",
-            f"Target:  {drive_str}",
-            f"Profile: {self.selected_profile.name}",
-            "",
-        ]
+        lines = [f"Mode:    {mode}", f"Target:  {drive_str}", ""]
 
-        inst_specs = [s for s in self.selected_profile.partitions if s.purpose == "installer"]
-        missing = 0
-        for s in inst_specs:
-            app = self._find_installer_app(s.installer_version)
-            tag = "Ready" if app else "NOT DOWNLOADED"
-            if not app:
-                missing += 1
-            lines.append(f"  {s.name:<35} [{tag}]")
+        if self.is_single_mode:
+            checked = self.inst_list.GetCheckedItems()
+            if checked and self.available_installers:
+                inst = self.available_installers[checked[0]]
+                lines.append(f"Installer: {inst.display_name}")
+                lines.append(f"Status:    {'Ready' if inst.downloaded else 'NEEDS DOWNLOAD'}")
+            elif self.downloaded_installers:
+                lines.append("Select an installer from the Installers tab")
+            else:
+                lines.append("No installers available — fetch and download one first")
+        else:
+            if self.selected_profile:
+                lines.append(f"Profile: {self.selected_profile.name}")
+                lines.append("")
+                inst_specs = [s for s in self.selected_profile.partitions if s.purpose == "installer"]
+                missing = 0
+                for s in inst_specs:
+                    app = self._find_installer_app(s.installer_version)
+                    tag = "Ready" if app else "NOT DOWNLOADED"
+                    if not app:
+                        missing += 1
+                    lines.append(f"  {s.name:<35} [{tag}]")
+                if missing:
+                    lines.append(f"\n  {missing} installer(s) need downloading first")
 
-        # Tools summary
+        # Tools
         selected_tools = [t for t in self.tool_catalog if t.selected]
         if selected_tools:
-            lines.append(f"\n  Tools: {len(selected_tools)} selected")
+            lines.append(f"\nTools: {len(selected_tools)} selected")
 
-        # Deploy summary
+        # Deploy
         dp = self._get_deploy_from_fields()
         if dp.username:
-            lines.append(f"  Deploy: {dp.username}@{dp.computer_name or '(auto)'}")
-
-        if missing:
-            lines.append(f"\n  {missing} installer(s) not downloaded")
+            lines.append(f"Deploy: user '{dp.username}' on '{dp.computer_name or 'auto'}'")
 
         self.summary_text.SetValue("\n".join(lines))
 
     def _on_build(self, event):
         drive_idx = self.drive_choice.GetSelection()
         if drive_idx < 0:
-            wx.MessageBox("Select a drive first.", "Error", wx.OK | wx.ICON_WARNING)
+            wx.MessageBox("Go back to Step 1 and select a drive.",
+                          "No Drive", wx.OK | wx.ICON_WARNING)
             return
 
         drive = self.external_drives[drive_idx]
-        mode = self.mode_choice.GetSelection()
 
-        if mode == 1:
-            # Single installer mode
-            self._build_single_installer(drive)
-            return
+        if self.is_single_mode:
+            self._do_single_build(drive)
+        else:
+            self._do_multi_build(drive)
 
-        if not self.selected_profile:
-            wx.MessageBox("Select a profile first.", "Error", wx.OK | wx.ICON_WARNING)
+    def _do_single_build(self, drive):
+        # Figure out which installer
+        checked = self.inst_list.GetCheckedItems()
+        installer = None
+
+        if checked and self.available_installers:
+            installer = self.available_installers[checked[0]]
+            if not installer.downloaded:
+                # Try to find it in downloaded list
+                for d in self.downloaded_installers:
+                    if installer.version.startswith(d.version):
+                        installer = d
+                        break
+                else:
+                    wx.MessageBox("Download this installer first.",
+                                  "Not Downloaded", wx.OK | wx.ICON_WARNING)
+                    return
+        elif self.downloaded_installers:
+            # Let them pick from downloaded
+            choices = [f"{d.display_name} ({d.build})" for d in self.downloaded_installers]
+            dlg = wx.SingleChoiceDialog(self, "Select installer:", "Pick Installer", choices)
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            installer = self.downloaded_installers[dlg.GetSelection()]
+        else:
+            wx.MessageBox("No installers available. Download one first.",
+                          "Error", wx.OK | wx.ICON_WARNING)
             return
 
         dlg = wx.MessageDialog(
             self,
-            f"This will ERASE ALL DATA on:\n\n"
-            f"    {drive.name}\n"
-            f"    {drive.display_size}  ({drive.identifier})\n\n"
-            f"Profile: {self.selected_profile.name}\n\n"
-            f"Continue?",
-            "Confirm Erase and Build",
-            wx.YES_NO | wx.NO_DEFAULT | wx.ICON_EXCLAMATION,
+            f"ERASE ALL DATA on:\n\n"
+            f"    {drive.name}  ({drive.display_size})\n"
+            f"    {drive.identifier}\n\n"
+            f"Flash: {installer.display_name}\n\nContinue?",
+            "Confirm", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_EXCLAMATION,
         )
         if dlg.ShowModal() != wx.ID_YES:
             return
@@ -630,165 +824,27 @@ class MainWindow(wx.Frame):
 
         self.build_btn.Disable()
         self.build_log.Clear()
-        self._log("Starting multi-boot build...")
-        self._log(f"Drive: {drive.display_name}")
-        self._log(f"Profile: {self.selected_profile.name}")
-        self._log("")
-
-        self.build_status.SetLabel("Partitioning drive...")
-        self.build_gauge.SetValue(5)
-
-        def do_build():
-            import time, os
-
-            # Partition
-            self._post_update("log", "Step 1: Partitioning drive...")
-            proc = disk_manager.partition_drive(drive.identifier, self.selected_profile.partitions)
-            stdout, stderr = proc.communicate()
-            if proc.returncode != 0:
-                wx.PostEvent(self, CompleteEvent({
-                    "type": "build_error", "error": f"Partitioning failed:\n{stderr}",
-                }))
-                return
-
-            self._post_update("log", "Partitioning complete.\n")
-            time.sleep(3)
-
-            # Flash installers
-            inst_specs = [s for s in self.selected_profile.partitions if s.purpose == "installer"]
-            self._post_update("log", f"Step 2: Flashing {len(inst_specs)} installers...")
-
-            for i, spec in enumerate(inst_specs):
-                app_path = self._find_installer_app(spec.installer_version)
-                if not app_path:
-                    self._post_update("log", f"  Skipping {spec.name}: not downloaded")
-                    continue
-
-                vol = f"/Volumes/{spec.name}"
-                if not os.path.exists(vol):
-                    self._post_update("log", f"  Skipping {spec.name}: volume not mounted")
-                    continue
-
-                pct = 10 + int((i / max(len(inst_specs), 1)) * 70)
-                self._post_update("progress", pct)
-                self._post_update("status", f"Flashing {spec.name} ({i+1}/{len(inst_specs)})...")
-                self._post_update("log", f"  Flashing {spec.name}...")
-
-                from ..core.privilege import run_privileged
-                cmd = (
-                    f'"{app_path}/Contents/Resources/createinstallmedia" '
-                    f'--volume "{vol}" --nointeraction'
-                )
-                p = run_privileged(cmd)
-                p.communicate()
-
-                if p.returncode != 0:
-                    self._post_update("log", f"  ERROR flashing {spec.name}")
-                else:
-                    self._post_update("log", f"  {spec.name}: Done!")
-
-            # Tools
-            selected_tools = [t for t in self.tool_catalog if t.selected]
-            if selected_tools:
-                self._post_update("log", f"\nStep 3: Installing {len(selected_tools)} tools...")
-                self._post_update("progress", 85)
-                # Find tools partition
-                tools_specs = [s for s in self.selected_profile.partitions
-                              if s.purpose == "tools"]
-                if tools_specs:
-                    tools_vol = f"/Volumes/{tools_specs[0].name}"
-                    if os.path.exists(tools_vol):
-                        for tool in selected_tools:
-                            if tool.install_method == "app_copy":
-                                tools_manager.copy_app_to_volume(tool.source, tools_vol)
-                                self._post_update("log", f"  Copied {tool.name}")
-                            elif tool.install_method == "brew":
-                                tools_manager.download_brew_to_volume(tool.source, tools_vol)
-                                self._post_update("log", f"  Added {tool.name} to install script")
-
-                        if self.include_scripts.GetValue():
-                            tools_manager.copy_scripts_to_volume(tools_vol)
-                            self._post_update("log", "  Copied repair scripts")
-
-            # Deploy profile
-            dp = self._get_deploy_from_fields()
-            if dp.username:
-                self._post_update("log", f"\nStep 4: Creating deploy package for '{dp.username}'...")
-                self._post_update("progress", 92)
-                if tools_specs:
-                    tools_vol = f"/Volumes/{tools_specs[0].name}"
-                    if os.path.exists(tools_vol):
-                        pkg_dir = os.path.join(tools_vol, "DriveKit", "packages")
-                        os.makedirs(pkg_dir, exist_ok=True)
-                        pkg = deploy_profile.generate_firstboot_pkg(dp, pkg_dir)
-                        if pkg:
-                            self._post_update("log", f"  Created: {os.path.basename(pkg)}")
-                        deploy_profile.save_profiles_to_volume([dp], tools_vol)
-                        self._post_update("log", "  Saved deploy profile")
-
-            wx.PostEvent(self, CompleteEvent({"type": "build_done"}))
-
-        threading.Thread(target=do_build, daemon=True).start()
-
-    def _build_single_installer(self, drive):
-        """Build a single-installer USB drive."""
-        # Pick which installer
-        downloaded = installer_manager.list_downloaded_installers()
-        if not downloaded:
-            wx.MessageBox("No installers downloaded.\nGo to Installers tab first.",
-                          "Error", wx.OK | wx.ICON_WARNING)
-            return
-
-        choices = [f"{d.display_name} ({d.build})" for d in downloaded]
-        dlg = wx.SingleChoiceDialog(self, "Select macOS installer:", "Single Installer", choices)
-        if dlg.ShowModal() != wx.ID_OK:
-            return
-        sel_idx = dlg.GetSelection()
-        installer = downloaded[sel_idx]
-
-        confirm = wx.MessageDialog(
-            self,
-            f"This will ERASE ALL DATA on:\n\n"
-            f"    {drive.name}\n"
-            f"    {drive.display_size}  ({drive.identifier})\n\n"
-            f"Installer: {installer.display_name}\n\n"
-            f"Continue?",
-            "Confirm Erase and Flash",
-            wx.YES_NO | wx.NO_DEFAULT | wx.ICON_EXCLAMATION,
-        )
-        if confirm.ShowModal() != wx.ID_YES:
-            return
-
-        if not disk_manager.verify_external(drive.identifier):
-            wx.MessageBox("Safety check failed.", "Error", wx.OK | wx.ICON_ERROR)
-            return
-
-        self.build_btn.Disable()
-        self.build_log.Clear()
         self._log(f"Single installer: {installer.display_name}")
-        self._log(f"Target: {drive.display_name}")
-        self._log("")
+        self._log(f"Target: {drive.display_name}\n")
         self.build_gauge.SetValue(10)
-        self.build_status.SetLabel(f"Erasing and flashing {installer.os_name}...")
 
         def do_single():
             import time
-
-            # Erase the drive with a single HFS+ partition
             from ..core.privilege import run_privileged
-            erase_cmd = f'diskutil eraseDisk JHFS+ "Install {installer.os_name}" GPT {drive.identifier}'
+
+            self._post_update("status", "Erasing drive...")
             self._post_update("log", "Erasing drive...")
+            erase_cmd = f'diskutil eraseDisk JHFS+ "Install {installer.os_name}" GPT {drive.identifier}'
             p = run_privileged(erase_cmd)
             p.communicate()
             if p.returncode != 0:
-                wx.PostEvent(self, CompleteEvent({
-                    "type": "build_error", "error": "Failed to erase drive",
-                }))
+                wx.PostEvent(self, CompleteEvent({"type": "build_error", "error": "Erase failed"}))
                 return
 
             time.sleep(2)
-            self._post_update("log", "Flashing installer...")
             self._post_update("progress", 20)
+            self._post_update("status", f"Flashing {installer.os_name}...")
+            self._post_update("log", f"Flashing {installer.display_name}...")
 
             vol = f'/Volumes/Install {installer.os_name}'
             cmd = (
@@ -799,15 +855,125 @@ class MainWindow(wx.Frame):
             p.communicate()
 
             if p.returncode != 0:
-                wx.PostEvent(self, CompleteEvent({
-                    "type": "build_error", "error": "createinstallmedia failed",
-                }))
+                wx.PostEvent(self, CompleteEvent({"type": "build_error", "error": "Flash failed"}))
             else:
                 wx.PostEvent(self, CompleteEvent({"type": "build_done"}))
 
         threading.Thread(target=do_single, daemon=True).start()
 
-    # ── Helpers ──
+    def _do_multi_build(self, drive):
+        if not self.selected_profile:
+            wx.MessageBox("Go to Step 3 and select a layout profile.",
+                          "No Profile", wx.OK | wx.ICON_WARNING)
+            return
+
+        dlg = wx.MessageDialog(
+            self,
+            f"ERASE ALL DATA on:\n\n"
+            f"    {drive.name}  ({drive.display_size})\n"
+            f"    {drive.identifier}\n\n"
+            f"Profile: {self.selected_profile.name}\n\nContinue?",
+            "Confirm", wx.YES_NO | wx.NO_DEFAULT | wx.ICON_EXCLAMATION,
+        )
+        if dlg.ShowModal() != wx.ID_YES:
+            return
+
+        if not disk_manager.verify_external(drive.identifier):
+            wx.MessageBox("Safety check failed.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        self.build_btn.Disable()
+        self.build_log.Clear()
+        self._log(f"Multi-Boot build: {self.selected_profile.name}")
+        self._log(f"Target: {drive.display_name}\n")
+        self.build_gauge.SetValue(5)
+
+        def do_multi():
+            import time, os
+            from ..core.privilege import run_privileged
+
+            # Partition
+            self._post_update("log", "Step 1: Partitioning drive...")
+            self._post_update("status", "Partitioning...")
+            proc = disk_manager.partition_drive(drive.identifier, self.selected_profile.partitions)
+            stdout, stderr = proc.communicate()
+            if proc.returncode != 0:
+                wx.PostEvent(self, CompleteEvent({"type": "build_error", "error": f"Partition failed:\n{stderr}"}))
+                return
+
+            self._post_update("log", "Done.\n")
+            time.sleep(3)
+
+            # Flash
+            inst_specs = [s for s in self.selected_profile.partitions if s.purpose == "installer"]
+            self._post_update("log", f"Step 2: Flashing {len(inst_specs)} installers...")
+            for i, spec in enumerate(inst_specs):
+                app_path = self._find_installer_app(spec.installer_version)
+                if not app_path:
+                    self._post_update("log", f"  Skip {spec.name}: not downloaded")
+                    continue
+                vol = f"/Volumes/{spec.name}"
+                if not os.path.exists(vol):
+                    self._post_update("log", f"  Skip {spec.name}: volume not found")
+                    continue
+
+                pct = 10 + int((i / max(len(inst_specs), 1)) * 70)
+                self._post_update("progress", pct)
+                self._post_update("status", f"Flashing {spec.name} ({i+1}/{len(inst_specs)})...")
+                self._post_update("log", f"  Flashing {spec.name}...")
+
+                cmd = (f'"{app_path}/Contents/Resources/createinstallmedia" '
+                       f'--volume "{vol}" --nointeraction')
+                p = run_privileged(cmd)
+                p.communicate()
+
+                if p.returncode != 0:
+                    self._post_update("log", f"  ERROR: {spec.name}")
+                else:
+                    self._post_update("log", f"  Done: {spec.name}")
+
+            # Tools
+            selected_tools = [t for t in self.tool_catalog if t.selected]
+            if selected_tools:
+                self._post_update("log", f"\nStep 3: Setting up tools...")
+                self._post_update("progress", 85)
+                tools_specs = [s for s in self.selected_profile.partitions if s.purpose == "tools"]
+                if tools_specs:
+                    tools_vol = f"/Volumes/{tools_specs[0].name}"
+                    if os.path.exists(tools_vol):
+                        for tool in selected_tools:
+                            if tool.install_method == "app_copy":
+                                tools_manager.copy_app_to_volume(tool.source, tools_vol)
+                                self._post_update("log", f"  Copied {tool.name}")
+                            elif tool.install_method == "brew":
+                                tools_manager.download_brew_to_volume(tool.source, tools_vol)
+                                self._post_update("log", f"  Staged {tool.name}")
+                        if self.include_scripts.GetValue():
+                            tools_manager.copy_scripts_to_volume(tools_vol)
+                            self._post_update("log", "  Added repair scripts")
+
+            # Deploy
+            dp = self._get_deploy_from_fields()
+            if dp.username:
+                self._post_update("log", f"\nStep 4: Creating deploy package...")
+                self._post_update("progress", 92)
+                if tools_specs:
+                    tools_vol = f"/Volumes/{tools_specs[0].name}"
+                    if os.path.exists(tools_vol):
+                        pkg_dir = os.path.join(tools_vol, "DriveKit", "packages")
+                        os.makedirs(pkg_dir, exist_ok=True)
+                        pkg = deploy_profile.generate_firstboot_pkg(dp, pkg_dir)
+                        if pkg:
+                            self._post_update("log", f"  Created {os.path.basename(pkg)}")
+                        deploy_profile.save_profiles_to_volume([dp], tools_vol)
+
+            wx.PostEvent(self, CompleteEvent({"type": "build_done"}))
+
+        threading.Thread(target=do_multi, daemon=True).start()
+
+    # ═══════════════════════════════════════════
+    # Helpers
+    # ═══════════════════════════════════════════
 
     def _post_update(self, kind, value):
         wx.PostEvent(self, UpdateEvent({"kind": kind, "value": value}))
@@ -825,8 +991,6 @@ class MainWindow(wx.Frame):
 
     def _log(self, msg):
         self.build_log.AppendText(msg + "\n")
-
-    # ── Thread Event Handlers ──
 
     def _on_thread_update(self, event):
         d = event.data
@@ -858,7 +1022,6 @@ class MainWindow(wx.Frame):
                 else f"Download failed: macOS {d['version']}"
             )
             self._load_downloaded_installers()
-            self._update_summary()
 
         elif t == "build_done":
             self.build_gauge.SetValue(100)
